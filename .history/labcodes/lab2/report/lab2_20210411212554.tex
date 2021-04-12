@@ -21,6 +21,38 @@
 \centerline{\textbf{\LARGE{操作系统实验报告Lab2}}}
 \bigskip
 \centerline{\large{成员：陈豪斌 \quad 朱浩泽 \quad 许佳培}}
+\bigskip
+    在这之前我们必须详细地了解uCore启动分页机制的原理是什么。
+    最开始在GCC对操作系统编译的时候，会根据GNU链接脚本调用kern entry这一段汇编代码，
+    并且这段代码将系统载入的地址设置在0xC01000000（即KERNBASE）处，
+    因此设置REALLOC函数就很有必要了，不然一段地址可能会访问到错误的地方。
+    其中，kern entry设置入口点的代码在kern/init/entry.S中，它主要是将一
+    级页表的基地址，即boot\_pgdir载入寄存器cr3中（Control Register 3），
+    随后将cr0的PG标志位设置上，标志分页机制已经开启。
+    \par 
+    在做好这些工作之后，kern\_init函数也就可以正常地执行了。
+    \bigskip
+    \par 
+    我们主要关注物理内存管理器的初始化函数pmm\_init是如何填充页表、对pmm进行初始化的。
+    \begin{enumerate}
+        \item boot\_cr3 = PADDR(boot\_pgdir) ：获取一级页表的基地址，注意entry.S和kernel.ld完成了将其读入的过程，因此我们可以
+              轻松获取基地址。注意到在entry.S中，movl \%eax, \%cr0指令结束后，在分段模式下的uCore实际上已经开启了分页机制。
+              
+        \item pmm\_init() ：初始化pmm\_manager，我们实现了First Fit算法，因此让其指向default版本，如果想要实现别的，可以让它指向一个我们实现的manager；
+        \item page\_init() ：物理内存探测，检测哪些内存区域可用。这个函数比较重要，需要着重进行分析：
+            {
+                \begin{enumerate}
+                    \item 首先这个函数会获取一个叫做e820map的结构体。
+                            \par
+                            e820 is shorthand for the facility by which the BIOS of x86-based computer systems reports the memory map to the operating system or boot loader.
+                            \par
+                            这个E820的获取，需要联系BootLoader的加载过程。关注bootasm.S文件中有关probe memory小节的描述，最重要的部分是它向
+                            CPU发送了一个int 15H的中断，以及设置AX低位为E820（movl \$0xE820, \%eax），那么这个中断会让CPU返回一个关于内存区域的报告信息，即E820结构。它被存到了离内核基址8000
+                            的内存处，所以根据KERNBASE + 0x8000就可以获取到内存分布的E820结构了。
+                \end{enumerate}
+            }
+    \end{enumerate} 
+
 
 \begin{enumerate}
     \item [一、] \textbf{实现First Fit算法}
@@ -58,7 +90,20 @@
     \item [二、] \textbf{实现寻找虚拟地址对应的页表项。}
     在实现之前，我们首先需要分析现代操作系统中是如何实现分页机制的。第一，对于每个进程而言，它都有自己的页表，这样能够实现每个应用程序都以为自己拥有全部的内存空间，而应用程序发起的虚拟地址请求将会被
     内存管理单元(Memory Management Unit)截获。第二，通过查询页表，将对应的物理地址传送回来，MMU在此过程中相当于是一个翻译器。那么，为了查询页表，我们首先需要知道页表的地址在哪里，这就需要一个叫做
-    Page Directory Table的表，它能够返回每个进程发起的虚拟地址请求的对应页表地址。
+    Page Directory Table的表，它能够返回每个进程发起的虚拟地址请求的对应页表地址。原理图如下图所示：
+    \begin{figure}[!htb]
+        \centering
+        \includegraphics[scale=0.25]{paging.png}
+        \label{fig:1}
+        \caption{页表、页表的表和虚拟地址转换机制}
+    \end{figure}
+    \par
+    另，若页表的表访问发生缺失，说明这个进程刚刚创建，所以我们需要为其开辟一片新的页（根据create变量来判断）。随后，我们需要将访问的页设置为referenced。
+    故函数实现方式如下：
+    \begin{enumerate}
+        \item [1.] 根据虚拟地址的高位和页表的表的基址，找到对应于这个虚拟地址的页表的地址。如果不存在，就需要分配一片新的内存页给页表的表，并对内容初始化为0，状态位重设；
+        \item [2.] 接下来通过PTE\_ADDR函数，获取这个Page Directory Entry（即页表的表中的某一项）指向的页表地址；
+        \item [3.] 根据第二步找到的页表地址，加上虚拟地址中间一部分对应的页表内的偏移，形成最终的页表项返回。
     \end{enumerate}
-
+    \end{enumerate}
 \end{document}

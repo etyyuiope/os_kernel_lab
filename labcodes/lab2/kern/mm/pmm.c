@@ -206,44 +206,60 @@ page_init(void) {
 
     cprintf("e820map:\n");
     int i;
+    /*
+     * nr_map: how many memory segments are contained in the e820map.
+     */
     for (i = 0; i < memmap->nr_map; i ++) {
         uint64_t begin = memmap->map[i].addr, end = begin + memmap->map[i].size;
         cprintf("  memory: %08llx, [%08llx, %08llx], type = %d.\n",
                 memmap->map[i].size, begin, end - 1, memmap->map[i].type);
-        if (memmap->map[i].type == E820_ARM) {
+        if (memmap->map[i].type == E820_ARM) { // Valid memory block.
             if (maxpa < end && begin < KMEMSIZE) {
                 maxpa = end;
             }
         }
     }
+    // KMEMSIZE: maximum memory size the kernel can manage.
     if (maxpa > KMEMSIZE) {
         maxpa = KMEMSIZE;
     }
 
+    // 此处定义的全局end数组指针，正好是ucore kernel加载后定义的第二个全局变量(kern_init处第一行定义的)
+    // 其上的高位内存空间并没有被使用,因此以end为起点，存放用于管理物理内存页面的数据结构
+
     extern char end[];
 
-    npage = maxpa / PGSIZE;
-    pages = (struct Page *)ROUNDUP((void *)end, PGSIZE);
+    /*
+     * Get the number of pages.
+     */
 
+    npage = maxpa / PGSIZE;
+    pages = (struct Page *)ROUNDUP((void *)end, PGSIZE); // <- Page* is an array to manage the page structure, so it occupies some memory spaces.
+    // Set them to be reserved.
     for (i = 0; i < npage; i ++) {
         SetPageReserved(pages + i);
     }
 
+    // Compute out the endpoint of page space, above which the free memory is available.
     uintptr_t freemem = PADDR((uintptr_t)pages + sizeof(struct Page) * npage);
 
     for (i = 0; i < memmap->nr_map; i ++) {
         uint64_t begin = memmap->map[i].addr, end = begin + memmap->map[i].size;
         if (memmap->map[i].type == E820_ARM) {
             if (begin < freemem) {
+                // Avoid the lowest address of free memory. Avoid address conflict.
                 begin = freemem;
             }
             if (end > KMEMSIZE) {
+                // Cannot exceed the maximum memory size the kernel could manage.
                 end = KMEMSIZE;
             }
             if (begin < end) {
+                // Delimit an area for the page, so each page has its start address.
                 begin = ROUNDUP(begin, PGSIZE);
                 end = ROUNDDOWN(end, PGSIZE);
                 if (begin < end) {
+                    // Fill in the page.
                     init_memmap(pa2page(begin), (end - begin) / PGSIZE);
                 }
             }
@@ -286,8 +302,23 @@ boot_alloc_page(void) {
 //         - check the correctness of pmm & paging mechanism, print PDT&PT
 void
 pmm_init(void) {
-    // We've already enabled paging
-    boot_cr3 = PADDR(boot_pgdir);
+    /*
+     *  CALL GRAPH: `kern_init` --> `pmm_init` --> `page_init` --> `init_memmap` -->
+     * `pmm_manager` --> `init_memmap`.
+     */
+
+    /*
+     * CR3 enables the processor to translate linear addresses into physical addresses by locating 
+     * the page directory and page tables for the current task. Typically, the upper 20 bits of 
+     * CR3 become the page directory base register (PDBR), which stores the physical address of 
+     * the first page directory entry. If the PCIDE bit in CR4 is set, the lowest 12 bits are used 
+     * for the process-context identifier (PCID).
+     * 
+     * CR0_PG indicates whether paging is enabled or not.
+     * 
+     * We've already initialized Page mechanism.
+     */
+    boot_cr3 = PADDR(boot_pgdir); // <- boot_cr3 is a register that stores the base address of page etable.
 
     //We need to alloc/free the physical memory (granularity is 4KB or other size). 
     //So a framework of physical memory manager (struct pmm_manager)is defined in pmm.h
@@ -298,12 +329,16 @@ pmm_init(void) {
 
     // detect physical memory space, reserve already used memory,
     // then use pmm->init_memmap to create free page list
+    /*
+     *  e820map it reports which memory address ranges are usable and which are reserved for use by the BIOS.
+     *      > Access by int 15h call by setting the AX register to value E820 in hexadecimal.
+     */
     page_init();
 
     //use pmm->check to verify the correctness of the alloc/free function in a pmm
     check_alloc_page();
 
-    check_pgdir();
+    check_pgdir(); // <- set boot_pgdir[0] = 0
 
     static_assert(KERNBASE % PTSIZE == 0 && KERNTOP % PTSIZE == 0);
 
@@ -323,7 +358,7 @@ pmm_init(void) {
 
     //now the basic virtual memory map(see memalyout.h) is established.
     //check the correctness of the basic virtual memory map.
-    check_boot_pgdir();
+    check_boot_pgdir(); // <- set boot_pgdir[0] = 0
 
     print_pgdir();
 
@@ -449,6 +484,19 @@ page_remove_pte(pde_t *pgdir, uintptr_t la, pte_t *ptep) {
                                   //(6) flush tlb
     }
 #endif
+    pte_t *entry = ptep;
+
+    if ((*entry & PTE_P)) {
+        struct Page *page = pa2page(*entry);
+
+        if (page_ref_dec(page) == 0) { // If page is no more referenced, it is discarded.
+            free_page(page);
+        }
+
+        *entry = 0;
+    }
+
+    tlb_invalidate(pgdir, la);
 }
 
 //page_remove - free an Page which is related linear address la and has an validated pte

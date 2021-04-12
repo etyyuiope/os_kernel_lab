@@ -286,8 +286,23 @@ boot_alloc_page(void) {
 //         - check the correctness of pmm & paging mechanism, print PDT&PT
 void
 pmm_init(void) {
-    // We've already enabled paging
-    boot_cr3 = PADDR(boot_pgdir);
+    /*
+     *  CALL GRAPH: `kern_init` --> `pmm_init` --> `page_init` --> `init_memmap` -->
+     * `pmm_manager` --> `init_memmap`.
+     */
+
+    /*
+     * CR3 enables the processor to translate linear addresses into physical addresses by locating 
+     * the page directory and page tables for the current task. Typically, the upper 20 bits of 
+     * CR3 become the page directory base register (PDBR), which stores the physical address of 
+     * the first page directory entry. If the PCIDE bit in CR4 is set, the lowest 12 bits are used 
+     * for the process-context identifier (PCID).
+     * 
+     * CR0_PG indicates whether paging is enabled or not.
+     * 
+     * We've already initialized Page mechanism.
+     */
+    boot_cr3 = PADDR(boot_pgdir); // <- boot_cr3 is a register that stores the base address of page etable.
 
     //We need to alloc/free the physical memory (granularity is 4KB or other size). 
     //So a framework of physical memory manager (struct pmm_manager)is defined in pmm.h
@@ -298,12 +313,16 @@ pmm_init(void) {
 
     // detect physical memory space, reserve already used memory,
     // then use pmm->init_memmap to create free page list
+    /*
+     *  e820map it reports which memory address ranges are usable and which are reserved for use by the BIOS.
+     *      > Access by int 15h call by setting the AX register to value E820 in hexadecimal.
+     */
     page_init();
 
     //use pmm->check to verify the correctness of the alloc/free function in a pmm
     check_alloc_page();
 
-    check_pgdir();
+    check_pgdir(); // <- set boot_pgdir[0] = 0
 
     static_assert(KERNBASE % PTSIZE == 0 && KERNTOP % PTSIZE == 0);
 
@@ -323,7 +342,7 @@ pmm_init(void) {
 
     //now the basic virtual memory map(see memalyout.h) is established.
     //check the correctness of the basic virtual memory map.
-    check_boot_pgdir();
+    check_boot_pgdir(); // <- set boot_pgdir[0] = 0
 
     print_pgdir();
 

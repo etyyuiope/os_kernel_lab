@@ -58,8 +58,20 @@ const struct pmm_manager *pmm_manager;
  * always available at virtual address PGADDR(PDX(VPT), PDX(VPT), 0), to which
  * vpd is set bellow.
  * */
-pte_t * const vpt = (pte_t *)VPT;
-pde_t * const vpd = (pde_t *)PGADDR(PDX(VPT), PDX(VPT), 0);
+
+/*
+ * Haobin Chen.
+ * 
+ * Note that each process has its own table, so if a virtual address is issued to MMU, we need to first find the address of its
+ * page table. So we need another table called page directory table which enables the MMU to find the page table where the virtual address should
+ * be looked up.
+ * 
+ * For convenience, a page directory table stores the pointer to the page table, so if we know the PDE of a virtual address, it is equivalent to 
+ * the page table itself.
+ */ 
+
+pte_t * const vpt = (pte_t *)VPT; // Virtual Page Table
+pde_t * const vpd = (pde_t *)PGADDR(PDX(VPT), PDX(VPT), 0); // Virtual Page Directory, i.e., the range.
 
 /* *
  * Global Descriptor Table:
@@ -275,7 +287,14 @@ boot_alloc_page(void) {
 void
 pmm_init(void) {
     // We've already enabled paging
-    boot_cr3 = PADDR(boot_pgdir);
+    /*
+     * CR3 enables the processor to translate linear addresses into physical addresses by locating 
+     * the page directory and page tables for the current task. Typically, the upper 20 bits of 
+     * CR3 become the page directory base register (PDBR), which stores the physical address of 
+     * the first page directory entry. If the PCIDE bit in CR4 is set, the lowest 12 bits are used 
+     * for the process-context identifier (PCID).
+     */
+    boot_cr3 = PADDR(boot_pgdir); // <- boot_cr3 is a register that stores the base address of page etable.
 
     //We need to alloc/free the physical memory (granularity is 4KB or other size). 
     //So a framework of physical memory manager (struct pmm_manager)is defined in pmm.h
@@ -291,7 +310,7 @@ pmm_init(void) {
     //use pmm->check to verify the correctness of the alloc/free function in a pmm
     check_alloc_page();
 
-    check_pgdir();
+    check_pgdir(); // <- set boot_pgdir[0] = 0
 
     static_assert(KERNBASE % PTSIZE == 0 && KERNTOP % PTSIZE == 0);
 
@@ -311,14 +330,14 @@ pmm_init(void) {
 
     //now the basic virtual memory map(see memalyout.h) is established.
     //check the correctness of the basic virtual memory map.
-    check_boot_pgdir();
+    check_boot_pgdir(); // <- set boot_pgdir[0] = 0
 
     print_pgdir();
 
 }
 
 //get_pte - get pte and return the kernel virtual address of this pte for la
-//        - if the PT contians this pte didn't exist, alloc a page for PT
+//        - if the PT caontaining this pte doesn't exist, alloc a page for PT
 // parameter:
 //  pgdir:  the kernel virtual base address of PDT
 //  la:     the linear address need to map
@@ -339,7 +358,7 @@ get_pte(pde_t *pgdir, uintptr_t la, bool create) {
      *   KADDR(pa) : takes a physical address and returns the corresponding kernel virtual address.
      *   set_page_ref(page,1) : means the page be referenced by one time
      *   page2pa(page): get the physical address of memory which this (struct Page *) page  manages
-     *   struct Page * alloc_page() : allocation a page
+     *   struct Page * alloc_page() : allocate a page
      *   memset(void *s, char c, size_t n) : sets the first n bytes of the memory area pointed by s
      *                                       to the specified value c.
      * DEFINEs:
@@ -359,6 +378,39 @@ get_pte(pde_t *pgdir, uintptr_t la, bool create) {
     }
     return NULL;          // (8) return page table entry
 #endif
+    // Get the page directory entry by adding offset(the index) and the base address of page direcotry table.
+    pde_t *entry = pgdir + PDX(la) * sizeof(pde_t);
+    
+    if (!(*entry & PTE_P)) {
+        // Not present in the table? We need to allocate the page table.
+        struct Page *page = 
+            (create ? 
+                            alloc_page() : NULL);
+
+        if (NULL == page) {
+            return page;
+        }
+
+        // Initialize the page.
+        set_page_ref(page, 1);
+        // Get the physical address for next step.
+        // ? uintptr_t seems to be unsigned int...
+        uintptr_t page_addr = page2pa(page);
+        // Set the page to be empty in the kernel.
+        memset(KADDR(page_addr), 0, sizeof(uintptr_t) * (PGSIZE));
+        *entry = page_addr |
+                 PTE_P     |
+                 PTE_W     |
+                 PTE_U     ;
+    }
+
+    uintptr_t page_table_index = PTX(la);
+    // Page directory table's entry is just a pointer to the page table itself.
+    uintptr_t page_table_addr = PTE_ADDR(*entry);
+
+    pte_t *page_table_entry = 
+            (pte_t *)(page_table_addr) + page_table_index * sizeof(pte_t);
+    return page_table_entry;
 }
 
 //get_page - get related Page struct for linear address la using PDT pgdir

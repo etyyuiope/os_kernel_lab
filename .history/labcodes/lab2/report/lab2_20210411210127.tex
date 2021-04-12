@@ -36,15 +36,8 @@
     我们主要关注物理内存管理器的初始化函数pmm\_init是如何填充页表、对pmm进行初始化的。
     \begin{enumerate}
         \item boot\_cr3 = PADDR(boot\_pgdir) ：获取一级页表的基地址，注意entry.S和kernel.ld完成了将其读入的过程，因此我们可以
-              轻松获取基地址。注意到在entry.S中，movl \%eax, \%cr0指令结束后，在分段模式下的uCore实际上已经允许开启了分页机制。
-              随后，因为此时的线性地址已经不是物理地址了，如果内核直接把运行的线性地址当作物理地址的话，就会发生问题，因为分页机制开启了，但没有正确映射会导致访问出错。
-              为了能够实现内核运作不出错，要重新对自身的虚拟地址进行映射，即将低0-4M的虚拟内存区域映射到KERNBASE + 0-4M的物理地址上去，这样就支持了内核自身的运作。
-              虽然内核已经把自己映射到了正确的物理地址，但此时的内核（EIP）实际上还占用着0~4M的低虚拟地址区域，这部分区域不是内核该存在的地方，因此它就需要进行一次长跳转，
-              让自己处于虚拟地址的高处，留出空间为用户程序使用。
-              \par
-              简而言之，这里的boot\_pgdir[0]，纯粹只是为了能够让内核在虚拟地址下运行而做的映射而已，当内核真正地要开始进行页表映射初始化后，就要把这段原始的
-              映射关系取消。总结来看，这一阶段的目的就是更新映射关系的同时将运行中的内核（EIP）从低虚拟地址“迁移”到高虚拟地址，而不造成伤害。
-              
+              轻松获取基地址。注意到在entry.S中，movl \%eax, \%cr0指令结束后，在实模式下的uCore实际上已经开启了分页机制，所有的内存地址
+              都可以通过offset + KERNBASE的形式来获取了。
         \item pmm\_init() ：初始化pmm\_manager，我们实现了First Fit算法，因此让其指向default版本，如果想要实现别的，可以让它指向一个我们实现的manager；
         \item page\_init() ：物理内存探测，检测哪些内存区域可用。这个函数比较重要，需要着重进行分析：
             {
@@ -112,19 +105,5 @@
         \item [2.] 接下来通过PTE\_ADDR函数，获取这个Page Directory Entry（即页表的表中的某一项）指向的页表地址；
         \item [3.] 根据第二步找到的页表地址，加上虚拟地址中间一部分对应的页表内的偏移，形成最终的页表项返回。
     \end{enumerate}
-    \par
-    下图是PDE和PTE的结构：
-    \begin{figure}[!htb]
-        \centering
-        \includegraphics[scale=0.5]{pde.png}
-        \label{fig:1}
-        \caption{Page Directory Entry}
-    \end{figure}
-    \begin{figure}[!htb]
-        \centering
-        \includegraphics[scale=0.5]{pte.png}
-        \label{fig:1}
-        \caption{Page Table Entry}
-    \end{figure}
     \end{enumerate}
 \end{document}

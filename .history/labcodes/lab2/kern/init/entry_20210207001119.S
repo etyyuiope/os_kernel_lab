@@ -8,7 +8,7 @@
 kern_entry:
     # load pa of boot pgdir
     movl $REALLOC(__boot_pgdir), %eax
-    movl %eax, %cr3 # cr3 stores the base address of page directory table.
+    movl %eax, %cr3
 
     # enable paging
     movl %cr0, %eax
