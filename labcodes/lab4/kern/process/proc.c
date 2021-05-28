@@ -395,7 +395,7 @@ int do_fork(uint32_t clone_flags, uintptr_t stack, struct trapframe *tf)
     }
 
     // Step 4: call copy_thread to setup tf & context in proc_struct.
-    (copy_thread(proc, stack, tf);
+    copy_thread(proc, stack, tf);
 
     bool flag;
     local_intr_save(flag);
