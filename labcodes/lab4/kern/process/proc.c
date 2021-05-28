@@ -398,6 +398,7 @@ int do_fork(uint32_t clone_flags, uintptr_t stack, struct trapframe *tf)
     copy_thread(proc, stack, tf);
 
     bool flag;
+    // Disable interrupt.
     local_intr_save(flag);
     nr_process ++;
 
@@ -406,6 +407,7 @@ int do_fork(uint32_t clone_flags, uintptr_t stack, struct trapframe *tf)
     hash_proc(proc);
     list_add(&proc_list, &(proc->list_link));
 
+    // Enable interrupt again.
     local_intr_restore(flag);
 
     // Step 6: call wakeup_proc to make the new child process RUNNABLE
