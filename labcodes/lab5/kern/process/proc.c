@@ -515,18 +515,18 @@ int do_fork(uint32_t clone_flags, uintptr_t stack, struct trapframe *tf)
     bool flag;
     // Disable interrupt.
     local_intr_save(flag);
-    nr_process++;
+    // nr_process++;
 
     proc->pid = get_pid();
     // Step 5: insert proc_struct into hash_list && proc_list.
     hash_proc(proc);
-    list_add(&proc_list, &(proc->list_link));
+    //list_add(&proc_list, &(proc->list_link));
+    set_links(proc);
 
     // Enable interrupt again.
     local_intr_restore(flag);
 
-    // Step 6: call wakeup_proc to make the new child process RUNNABLE
-    proc->state = PROC_RUNNABLE;
+    wakeup_proc(proc);
 
     // Step 7: set the ret to be the pid of the newly created child process.
     ret = proc->pid;
