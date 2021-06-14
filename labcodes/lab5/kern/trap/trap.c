@@ -53,6 +53,10 @@ idt_init(void) {
     for (i = 0; i < sizeof(idt) / sizeof(struct gatedesc); i ++) {
         SETGATE(idt[i], 0, GD_KTEXT, __vectors[i], DPL_KERNEL);
     }
+
+    // Enable Syscall.
+    SETGATE(idt[T_SYSCALL], 1, GD_KTEXT, __vectors[T_SYSCALL], DPL_USER);
+
     lidt(&idt_pd);
 }
 
@@ -195,6 +199,8 @@ trap_dispatch(struct trapframe *tf) {
         ticks ++;
         if (ticks % TICK_NUM == 0) {
             print_ticks();
+            current->need_resched = 1;
+            // Reschedule the process every 100 ticks.
         }
         break;
     case IRQ_OFFSET + IRQ_COM1:

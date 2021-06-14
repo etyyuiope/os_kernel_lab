@@ -57,6 +57,13 @@ struct proc_struct {
     int exit_code;                              // exit code (be sent to parent proc)
     uint32_t wait_state;                        // waiting state
     struct proc_struct *cptr, *yptr, *optr;     // relations between processes
+    /**
+     * cptr : child ptr. The sub-process of the current process
+     * yptr younger sibling ptr.
+     * optr older sibling ptr.
+     * cptr is the head of the linked list of the subprocess of the current process. 
+     *      We can find all subprocesses by yptr and optr.
+     */
 };
 
 #define PF_EXITING                  0x00000001      // getting shutdown
