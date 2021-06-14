@@ -10,11 +10,6 @@
 #include <vmm.h>
 #include <swap.h>
 #include <kdebug.h>
-#include <unistd.h>
-#include <syscall.h>
-#include <error.h>
-#include <sched.h>
-#include <sync.h>
 
 #define TICK_NUM 100
 
@@ -53,9 +48,12 @@ idt_init(void) {
       *     You don't know the meaning of this instruction? just google it! and check the libs/x86.h to know more.
       *     Notice: the argument of lidt is idt_pd. try to find it!
       */
-     /* LAB5 YOUR CODE */ 
-     //you should update your lab1 code (just add ONE or TWO lines of code), let user app to use syscall to get the service of ucore
-     //so you should setup the syscall interrupt gate in here
+    extern uintptr_t __vectors[];
+    int i;
+    for (i = 0; i < sizeof(idt) / sizeof(struct gatedesc); i ++) {
+        SETGATE(idt[i], 0, GD_KTEXT, __vectors[i], DPL_KERNEL);
+    }
+    lidt(&idt_pd);
 }
 
 static const char *
@@ -160,23 +158,11 @@ print_pgfault(struct trapframe *tf) {
 static int
 pgfault_handler(struct trapframe *tf) {
     extern struct mm_struct *check_mm_struct;
-    if(check_mm_struct !=NULL) { //used for test check_swap
-            print_pgfault(tf);
-        }
-    struct mm_struct *mm;
+    print_pgfault(tf);
     if (check_mm_struct != NULL) {
-        assert(current == idleproc);
-        mm = check_mm_struct;
+        return do_pgfault(check_mm_struct, tf->tf_err, rcr2());
     }
-    else {
-        if (current == NULL) {
-            print_trapframe(tf);
-            print_pgfault(tf);
-            panic("unhandled page fault.\n");
-        }
-        mm = current->mm;
-    }
-    return do_pgfault(mm, tf->tf_err, rcr2());
+    panic("unhandled page fault.\n");
 }
 
 static volatile int in_swap_tick_event = 0;
@@ -186,31 +172,18 @@ static void
 trap_dispatch(struct trapframe *tf) {
     char c;
 
-    int ret=0;
+    int ret;
 
     switch (tf->tf_trapno) {
     case T_PGFLT:  //page fault
         if ((ret = pgfault_handler(tf)) != 0) {
             print_trapframe(tf);
-            if (current == NULL) {
-                panic("handle pgfault failed. ret=%d\n", ret);
-            }
-            else {
-                if (trap_in_kernel(tf)) {
-                    panic("handle pgfault failed in kernel mode. ret=%d\n", ret);
-                }
-                cprintf("killed by kernel.\n");
-                panic("handle user mode pgfault failed. ret=%d\n", ret); 
-                do_exit(-E_KILLED);
-            }
+            panic("handle pgfault failed. %e\n", ret);
         }
-        break;
-    case T_SYSCALL:
-        syscall();
         break;
     case IRQ_OFFSET + IRQ_TIMER:
 #if 0
-    LAB3 : If some page replacement algorithm(such as CLOCK PRA) need tick to change the priority of pages,
+    LAB3 : If some page replacement algorithm(such as CLOCK PRA) need tick to change the priority of pages, 
     then you can add code here. 
 #endif
         /* LAB1 YOUR CODE : STEP 3 */
@@ -219,11 +192,10 @@ trap_dispatch(struct trapframe *tf) {
          * (2) Every TICK_NUM cycle, you can print some info using a funciton, such as print_ticks().
          * (3) Too Simple? Yes, I think so!
          */
-        /* LAB5 YOUR CODE */
-        /* you should upate you lab1 code (just add ONE or TWO lines of code):
-         *    Every TICK_NUM cycle, you should set current process's current->need_resched = 1
-         */
-  
+        ticks ++;
+        if (ticks % TICK_NUM == 0) {
+            print_ticks();
+        }
         break;
     case IRQ_OFFSET + IRQ_COM1:
         c = cons_getc();
@@ -243,14 +215,11 @@ trap_dispatch(struct trapframe *tf) {
         /* do nothing */
         break;
     default:
-        print_trapframe(tf);
-        if (current != NULL) {
-            cprintf("unhandled trap.\n");
-            do_exit(-E_KILLED);
-        }
         // in kernel, it must be a mistake
-        panic("unexpected trap in kernel.\n");
-
+        if ((tf->tf_cs & 3) == 0) {
+            print_trapframe(tf);
+            panic("unexpected trap in kernel.\n");
+        }
     }
 }
 
@@ -262,28 +231,6 @@ trap_dispatch(struct trapframe *tf) {
 void
 trap(struct trapframe *tf) {
     // dispatch based on what type of trap occurred
-    // used for previous projects
-    if (current == NULL) {
-        trap_dispatch(tf);
-    }
-    else {
-        // keep a trapframe chain in stack
-        struct trapframe *otf = current->tf;
-        current->tf = tf;
-    
-        bool in_kernel = trap_in_kernel(tf);
-    
-        trap_dispatch(tf);
-    
-        current->tf = otf;
-        if (!in_kernel) {
-            if (current->flags & PF_EXITING) {
-                do_exit(-E_KILLED);
-            }
-            if (current->need_resched) {
-                schedule();
-            }
-        }
-    }
+    trap_dispatch(tf);
 }
 
