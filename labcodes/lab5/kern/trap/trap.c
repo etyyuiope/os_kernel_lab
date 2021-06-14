@@ -10,6 +10,11 @@
 #include <vmm.h>
 #include <swap.h>
 #include <kdebug.h>
+#include <unistd.h>
+#include <syscall.h>
+#include <error.h>
+#include <sched.h>
+#include <sync.h>
 
 #define TICK_NUM 100
 
