@@ -239,6 +239,28 @@ trap_dispatch(struct trapframe *tf) {
 void
 trap(struct trapframe *tf) {
     // dispatch based on what type of trap occurred
-    trap_dispatch(tf);
+    // used for previous projects
+    if (current == NULL) {
+        trap_dispatch(tf);
+    }
+    else {
+        // keep a trapframe chain in stack
+        struct trapframe *otf = current->tf;
+        current->tf = tf;
+    
+        bool in_kernel = trap_in_kernel(tf);
+    
+        trap_dispatch(tf);
+    
+        current->tf = otf;
+        if (!in_kernel) {
+            if (current->flags & PF_EXITING) {
+                do_exit(-E_KILLED);
+            }
+            if (current->need_resched) {
+                schedule();
+            }
+        }
+    }
 }
 
