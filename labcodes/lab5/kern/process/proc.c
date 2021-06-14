@@ -1,3 +1,4 @@
+/*
 #include <proc.h>
 #include <kmalloc.h>
 #include <string.h>
@@ -62,9 +63,9 @@ SYS_getpid      : get the process's pid
 // the process set's list
 list_entry_t proc_list;
 
-#define HASH_SHIFT          10
-#define HASH_LIST_SIZE      (1 << HASH_SHIFT)
-#define pid_hashfn(x)       (hash32(x, HASH_SHIFT))
+#define HASH_SHIFT 10
+#define HASH_LIST_SIZE (1 << HASH_SHIFT)
+#define pid_hashfn(x) (hash32(x, HASH_SHIFT))
 
 // has list for process set based on pid
 static list_entry_t hash_list[HASH_LIST_SIZE];
@@ -84,11 +85,13 @@ void switch_to(struct context *from, struct context *to);
 
 // alloc_proc - alloc a proc_struct and init all fields of proc_struct
 static struct proc_struct *
-alloc_proc(void) {
+alloc_proc(void)
+{
     struct proc_struct *proc = kmalloc(sizeof(struct proc_struct));
-    if (proc != NULL) {
-    //LAB4:EXERCISE1 YOUR CODE
-    /*
+    if (proc != NULL)
+    {
+        //LAB4:EXERCISE1 YOUR CODE
+        /*
      * below fields in proc_struct need to be initialized
      *       enum proc_state state;                      // Process state
      *       int pid;                                    // Process ID
@@ -103,34 +106,67 @@ alloc_proc(void) {
      *       uint32_t flags;                             // Process flag
      *       char name[PROC_NAME_LEN + 1];               // Process name
      */
+
+#ifndef NULL_PID
+#define NULL_PID -1
+#endif
         proc->state = PROC_UNINIT;
-        proc->pid = -1;
+        proc->pid = NULL_PID; // not yet initialized and runnable.
         proc->runs = 0;
+        /**
+         * If the process is in kernel mode, then the kstack is equivalent to the kernel stack the program is using;
+         * If the process is in user mode, then the kstack denotes the stack used to store the hardware information when
+         * there is a switch of privilege.
+         */
         proc->kstack = 0;
         proc->need_resched = 0;
+        /**
+         * Each process (except the eldermost one) is forked by its parent process, and if the memory space
+         * is not yet modified, i.e., written by the process, the memory space is shared with its parent.
+         */
         proc->parent = NULL;
+        /**
+         * Let the memory management be a nullptr because the process is always on the kernel; thus, there
+         * is no need to swap the virtual memory out of the memory or just swap it in from the disk.
+         */
         proc->mm = NULL;
+        /**
+         * @see labcodes/lab4/kern/process/switch.S to know how context switching works according to the assembly language.
+         * 
+         * func switch_to.
+         */
         memset(&(proc->context), 0, sizeof(struct context));
+        /**
+         * @see labcodes/lab4/trap/trap.c to know how trap works.
+         * 
+         * The kernel maintains a list of trap pointers which points to the stack address where the interrupt(s) happened whereby
+         * the trap could return to its previous state.
+         */
         proc->tf = NULL;
+        /**
+         * Note that the memory management is not set because the process is runnning in kernel mode; however, the page table
+         * should also be utilized to find the physical address, meanwhile. To find the physical address of the page directory
+         * table, the boot_cr3 (the content of the register cr3) should be recorded.
+         */
         proc->cr3 = boot_cr3;
         proc->flags = 0;
         memset(proc->name, 0, PROC_NAME_LEN);
-        proc->wait_state = 0;
-        proc->cptr = proc->optr = proc->yptr = NULL;
     }
     return proc;
 }
 
 // set_proc_name - set the name of proc
 char *
-set_proc_name(struct proc_struct *proc, const char *name) {
+set_proc_name(struct proc_struct *proc, const char *name)
+{
     memset(proc->name, 0, sizeof(proc->name));
     return memcpy(proc->name, name, PROC_NAME_LEN);
 }
 
 // get_proc_name - get the name of proc
 char *
-get_proc_name(struct proc_struct *proc) {
+get_proc_name(struct proc_struct *proc)
+{
     static char name[PROC_NAME_LEN + 1];
     memset(name, 0, sizeof(name));
     return memcpy(name, proc->name, PROC_NAME_LEN);
@@ -138,60 +174,74 @@ get_proc_name(struct proc_struct *proc) {
 
 // set_links - set the relation links of process
 static void
-set_links(struct proc_struct *proc) {
+set_links(struct proc_struct *proc)
+{
     list_add(&proc_list, &(proc->list_link));
     proc->yptr = NULL;
-    if ((proc->optr = proc->parent->cptr) != NULL) {
+    if ((proc->optr = proc->parent->cptr) != NULL)
+    {
         proc->optr->yptr = proc;
     }
     proc->parent->cptr = proc;
-    nr_process ++;
+    nr_process++;
 }
 
 // remove_links - clean the relation links of process
 static void
-remove_links(struct proc_struct *proc) {
+remove_links(struct proc_struct *proc)
+{
     list_del(&(proc->list_link));
-    if (proc->optr != NULL) {
+    if (proc->optr != NULL)
+    {
         proc->optr->yptr = proc->yptr;
     }
-    if (proc->yptr != NULL) {
+    if (proc->yptr != NULL)
+    {
         proc->yptr->optr = proc->optr;
     }
-    else {
-       proc->parent->cptr = proc->optr;
+    else
+    {
+        proc->parent->cptr = proc->optr;
     }
-    nr_process --;
+    nr_process--;
 }
 
 // get_pid - alloc a unique pid for process
 static int
-get_pid(void) {
+get_pid(void)
+{
     static_assert(MAX_PID > MAX_PROCESS);
     struct proc_struct *proc;
     list_entry_t *list = &proc_list, *le;
     static int next_safe = MAX_PID, last_pid = MAX_PID;
-    if (++ last_pid >= MAX_PID) {
+    if (++last_pid >= MAX_PID)
+    {
         last_pid = 1;
         goto inside;
     }
-    if (last_pid >= next_safe) {
+    if (last_pid >= next_safe)
+    {
     inside:
         next_safe = MAX_PID;
     repeat:
         le = list;
-        while ((le = list_next(le)) != list) {
+        while ((le = list_next(le)) != list)
+        {
             proc = le2proc(le, list_link);
-            if (proc->pid == last_pid) {
-                if (++ last_pid >= next_safe) {
-                    if (last_pid >= MAX_PID) {
+            if (proc->pid == last_pid)
+            {
+                if (++last_pid >= next_safe)
+                {
+                    if (last_pid >= MAX_PID)
+                    {
                         last_pid = 1;
                     }
                     next_safe = MAX_PID;
                     goto repeat;
                 }
             }
-            else if (proc->pid > last_pid && next_safe > proc->pid) {
+            else if (proc->pid > last_pid && next_safe > proc->pid)
+            {
                 next_safe = proc->pid;
             }
         }
@@ -201,9 +251,10 @@ get_pid(void) {
 
 // proc_run - make process "proc" running on cpu
 // NOTE: before call switch_to, should load  base addr of "proc"'s new PDT
-void
-proc_run(struct proc_struct *proc) {
-    if (proc != current) {
+void proc_run(struct proc_struct *proc)
+{
+    if (proc != current)
+    {
         bool intr_flag;
         struct proc_struct *prev = current, *next = proc;
         local_intr_save(intr_flag);
@@ -221,30 +272,37 @@ proc_run(struct proc_struct *proc) {
 // NOTE: the addr of forkret is setted in copy_thread function
 //       after switch_to, the current proc will execute here.
 static void
-forkret(void) {
+forkret(void)
+{
     forkrets(current->tf);
 }
 
 // hash_proc - add proc into proc hash_list
 static void
-hash_proc(struct proc_struct *proc) {
+hash_proc(struct proc_struct *proc)
+{
     list_add(hash_list + pid_hashfn(proc->pid), &(proc->hash_link));
 }
 
 // unhash_proc - delete proc from proc hash_list
 static void
-unhash_proc(struct proc_struct *proc) {
+unhash_proc(struct proc_struct *proc)
+{
     list_del(&(proc->hash_link));
 }
 
 // find_proc - find proc frome proc hash_list according to pid
 struct proc_struct *
-find_proc(int pid) {
-    if (0 < pid && pid < MAX_PID) {
+find_proc(int pid)
+{
+    if (0 < pid && pid < MAX_PID)
+    {
         list_entry_t *list = hash_list + pid_hashfn(pid), *le = list;
-        while ((le = list_next(le)) != list) {
+        while ((le = list_next(le)) != list)
+        {
             struct proc_struct *proc = le2proc(le, hash_link);
-            if (proc->pid == pid) {
+            if (proc->pid == pid)
+            {
                 return proc;
             }
         }
@@ -253,10 +311,10 @@ find_proc(int pid) {
 }
 
 // kernel_thread - create a kernel thread using "fn" function
-// NOTE: the contents of temp trapframe tf will be copied to 
+// NOTE: the contents of temp trapframe tf will be copied to
 //       proc->tf in do_fork-->copy_thread function
-int
-kernel_thread(int (*fn)(void *), void *arg, uint32_t clone_flags) {
+int kernel_thread(int (*fn)(void *), void *arg, uint32_t clone_flags)
+{
     struct trapframe tf;
     memset(&tf, 0, sizeof(struct trapframe));
     tf.tf_cs = KERNEL_CS;
@@ -269,9 +327,11 @@ kernel_thread(int (*fn)(void *), void *arg, uint32_t clone_flags) {
 
 // setup_kstack - alloc pages with size KSTACKPAGE as process kernel stack
 static int
-setup_kstack(struct proc_struct *proc) {
+setup_kstack(struct proc_struct *proc)
+{
     struct Page *page = alloc_pages(KSTACKPAGE);
-    if (page != NULL) {
+    if (page != NULL)
+    {
         proc->kstack = (uintptr_t)page2kva(page);
         return 0;
     }
@@ -280,15 +340,18 @@ setup_kstack(struct proc_struct *proc) {
 
 // put_kstack - free the memory space of process kernel stack
 static void
-put_kstack(struct proc_struct *proc) {
+put_kstack(struct proc_struct *proc)
+{
     free_pages(kva2page((void *)(proc->kstack)), KSTACKPAGE);
 }
 
 // setup_pgdir - alloc one page as PDT
 static int
-setup_pgdir(struct mm_struct *mm) {
+setup_pgdir(struct mm_struct *mm)
+{
     struct Page *page;
-    if ((page = alloc_page()) == NULL) {
+    if ((page = alloc_page()) == NULL)
+    {
         return -E_NO_MEM;
     }
     pde_t *pgdir = page2kva(page);
@@ -300,30 +363,36 @@ setup_pgdir(struct mm_struct *mm) {
 
 // put_pgdir - free the memory space of PDT
 static void
-put_pgdir(struct mm_struct *mm) {
+put_pgdir(struct mm_struct *mm)
+{
     free_page(kva2page(mm->pgdir));
 }
 
 // copy_mm - process "proc" duplicate OR share process "current"'s mm according clone_flags
 //         - if clone_flags & CLONE_VM, then "share" ; else "duplicate"
 static int
-copy_mm(uint32_t clone_flags, struct proc_struct *proc) {
+copy_mm(uint32_t clone_flags, struct proc_struct *proc)
+{
     struct mm_struct *mm, *oldmm = current->mm;
 
     /* current is a kernel thread */
-    if (oldmm == NULL) {
+    if (oldmm == NULL)
+    {
         return 0;
     }
-    if (clone_flags & CLONE_VM) {
+    if (clone_flags & CLONE_VM)
+    {
         mm = oldmm;
         goto good_mm;
     }
 
     int ret = -E_NO_MEM;
-    if ((mm = mm_create()) == NULL) {
+    if ((mm = mm_create()) == NULL)
+    {
         goto bad_mm;
     }
-    if (setup_pgdir(mm) != 0) {
+    if (setup_pgdir(mm) != 0)
+    {
         goto bad_pgdir_cleanup_mm;
     }
 
@@ -333,7 +402,8 @@ copy_mm(uint32_t clone_flags, struct proc_struct *proc) {
     }
     unlock_mm(oldmm);
 
-    if (ret != 0) {
+    if (ret != 0)
+    {
         goto bad_dup_cleanup_mmap;
     }
 
@@ -354,7 +424,8 @@ bad_mm:
 // copy_thread - setup the trapframe on the  process's kernel stack top and
 //             - setup the kernel entry point and stack of process
 static void
-copy_thread(struct proc_struct *proc, uintptr_t esp, struct trapframe *tf) {
+copy_thread(struct proc_struct *proc, uintptr_t esp, struct trapframe *tf)
+{
     proc->tf = (struct trapframe *)(proc->kstack + KSTACKSIZE) - 1;
     *(proc->tf) = *tf;
     proc->tf->tf_regs.reg_eax = 0;
@@ -370,11 +441,12 @@ copy_thread(struct proc_struct *proc, uintptr_t esp, struct trapframe *tf) {
  * @stack:       the parent's user stack pointer. if stack==0, It means to fork a kernel thread.
  * @tf:          the trapframe info, which will be copied to child process's proc->tf
  */
-int
-do_fork(uint32_t clone_flags, uintptr_t stack, struct trapframe *tf) {
+int do_fork(uint32_t clone_flags, uintptr_t stack, struct trapframe *tf)
+{
     int ret = -E_NO_FREE_PROC;
     struct proc_struct *proc;
-    if (nr_process >= MAX_PROCESS) {
+    if (nr_process >= MAX_PROCESS)
+    {
         goto fork_out;
     }
     ret = -E_NO_MEM;
@@ -403,34 +475,65 @@ do_fork(uint32_t clone_flags, uintptr_t stack, struct trapframe *tf) {
     //    5. insert proc_struct into hash_list && proc_list
     //    6. call wakeup_proc to make the new child process RUNNABLE
     //    7. set ret vaule using child proc's pid
-    if ((proc = alloc_proc()) == NULL) {
+
+    //LAB5 YOUR CODE : (update LAB4 steps)
+    /* Some Functions
+    *    set_links:  set the relation links of process.  ALSO SEE: remove_links:  lean the relation links of process 
+    *    -------------------
+	*    update step 1: set child proc's parent to current process, make sure current process's wait_state is 0
+	*    update step 5: insert proc_struct into hash_list && proc_list, set the relation links of process
+    */
+
+    // Step 1: call alloc_proc to allocate a proc_struct.
+    if ((proc = alloc_proc()) == NULL)
+    {
         goto fork_out;
     }
 
-    proc->parent = current;
+    proc->parent = current; // because the current process calls do_fork
+    
+    if (current->wait_state != 0) {
+        panic("The current process is also waiting!\n");
+    }
+
     assert(current->wait_state == 0);
 
-    if (setup_kstack(proc) != 0) {
-        goto bad_fork_cleanup_proc;
-    }
-    if (copy_mm(clone_flags, proc) != 0) {
+    // Step 2: setup_kstack to allocate a kernal stack for child process;
+    if (setup_kstack(proc) != 0)
+    {
         goto bad_fork_cleanup_kstack;
     }
+
+    // Step 3: call copy_mm to duplicate or share mm according to the clone_flag (Who wrote the comment? Your English sucks).
+    if (copy_mm(clone_flags, proc) != 0)
+    {
+        goto bad_fork_cleanup_proc;
+    }
+
+    // Step 4: call copy_thread to setup tf & context in proc_struct.
     copy_thread(proc, stack, tf);
 
-    bool intr_flag;
-    local_intr_save(intr_flag);
-    {
-        proc->pid = get_pid();
-        hash_proc(proc);
-        set_links(proc);
+    bool flag;
+    // Disable interrupt.
+    local_intr_save(flag);
+    nr_process++;
 
-    }
-    local_intr_restore(intr_flag);
+    proc->pid = get_pid();
+    // Step 5: insert proc_struct into hash_list && proc_list.
+    hash_proc(proc);
+    list_add(&proc_list, &(proc->list_link));
 
-    wakeup_proc(proc);
+    // Enable interrupt again.
+    local_intr_restore(flag);
 
+    // Step 6: call wakeup_proc to make the new child process RUNNABLE
+    proc->state = PROC_RUNNABLE;
+
+    // Step 7: set the ret to be the pid of the newly created child process.
     ret = proc->pid;
+
+    return ret;
+
 fork_out:
     return ret;
 
@@ -445,19 +548,23 @@ bad_fork_cleanup_proc:
 //   1. call exit_mmap & put_pgdir & mm_destroy to free the almost all memory space of process
 //   2. set process' state as PROC_ZOMBIE, then call wakeup_proc(parent) to ask parent reclaim itself.
 //   3. call scheduler to switch to other process
-int
-do_exit(int error_code) {
-    if (current == idleproc) {
+int do_exit(int error_code)
+{
+    if (current == idleproc)
+    {
         panic("idleproc exit.\n");
     }
-    if (current == initproc) {
+    if (current == initproc)
+    {
         panic("initproc exit.\n");
     }
-    
+
     struct mm_struct *mm = current->mm;
-    if (mm != NULL) {
+    if (mm != NULL)
+    {
         lcr3(boot_cr3);
-        if (mm_count_dec(mm) == 0) {
+        if (mm_count_dec(mm) == 0)
+        {
             exit_mmap(mm);
             put_pgdir(mm);
             mm_destroy(mm);
@@ -466,34 +573,39 @@ do_exit(int error_code) {
     }
     current->state = PROC_ZOMBIE;
     current->exit_code = error_code;
-    
+
     bool intr_flag;
     struct proc_struct *proc;
     local_intr_save(intr_flag);
     {
         proc = current->parent;
-        if (proc->wait_state == WT_CHILD) {
+        if (proc->wait_state == WT_CHILD)
+        {
             wakeup_proc(proc);
         }
-        while (current->cptr != NULL) {
+        while (current->cptr != NULL)
+        {
             proc = current->cptr;
             current->cptr = proc->optr;
-    
+
             proc->yptr = NULL;
-            if ((proc->optr = initproc->cptr) != NULL) {
+            if ((proc->optr = initproc->cptr) != NULL)
+            {
                 initproc->cptr->yptr = proc;
             }
             proc->parent = initproc;
             initproc->cptr = proc;
-            if (proc->state == PROC_ZOMBIE) {
-                if (initproc->wait_state == WT_CHILD) {
+            if (proc->state == PROC_ZOMBIE)
+            {
+                if (initproc->wait_state == WT_CHILD)
+                {
                     wakeup_proc(initproc);
                 }
             }
         }
     }
     local_intr_restore(intr_flag);
-    
+
     schedule();
     panic("do_exit will not return!! %d.\n", current->pid);
 }
@@ -503,54 +615,69 @@ do_exit(int error_code) {
  * @size:  the size of the content of binary program
  */
 static int
-load_icode(unsigned char *binary, size_t size) {
-    if (current->mm != NULL) {
+load_icode(unsigned char *binary, size_t size)
+{
+    if (current->mm != NULL)
+    {
         panic("load_icode: current->mm must be empty.\n");
     }
 
     int ret = -E_NO_MEM;
     struct mm_struct *mm;
     //(1) create a new mm for current process
-    if ((mm = mm_create()) == NULL) {
+    if ((mm = mm_create()) == NULL)
+    {
         goto bad_mm;
     }
     //(2) create a new PDT, and mm->pgdir= kernel virtual addr of PDT
-    if (setup_pgdir(mm) != 0) {
+    if (setup_pgdir(mm) != 0)
+    {
         goto bad_pgdir_cleanup_mm;
     }
     //(3) copy TEXT/DATA section, build BSS parts in binary to memory space of process
     struct Page *page;
     //(3.1) get the file header of the bianry program (ELF format)
-    struct elfhdr *elf = (struct elfhdr *)binary;
+    struct elfhdr *elf = (struct elfhdr *)binary; // <- the header is at position 0.
     //(3.2) get the entry of the program section headers of the bianry program (ELF format)
     struct proghdr *ph = (struct proghdr *)(binary + elf->e_phoff);
     //(3.3) This program is valid?
-    if (elf->e_magic != ELF_MAGIC) {
+    if (elf->e_magic != ELF_MAGIC)
+    {
         ret = -E_INVAL_ELF;
         goto bad_elf_cleanup_pgdir;
     }
 
     uint32_t vm_flags, perm;
     struct proghdr *ph_end = ph + elf->e_phnum;
-    for (; ph < ph_end; ph ++) {
-    //(3.4) find every program section headers
-        if (ph->p_type != ELF_PT_LOAD) {
-            continue ;
+    for (; ph < ph_end; ph++)
+    {
+        //(3.4) find the header of each program section; it not loadable, just skip this section,
+        if (ph->p_type != ELF_PT_LOAD)
+        {
+            continue;
         }
-        if (ph->p_filesz > ph->p_memsz) {
+        // This shall not happen: the size of the file is even bigger than the memory size it could occupy?
+        if (ph->p_filesz > ph->p_memsz)
+        {
             ret = -E_INVAL_ELF;
             goto bad_cleanup_mmap;
         }
-        if (ph->p_filesz == 0) {
-            continue ;
+        if (ph->p_filesz == 0)
+        {
+            continue;
         }
-    //(3.5) call mm_map fun to setup the new vma ( ph->p_va, ph->p_memsz)
+        //(3.5) call mm_map fun to setup the new vma ( ph->p_va, ph->p_memsz)
         vm_flags = 0, perm = PTE_U;
-        if (ph->p_flags & ELF_PF_X) vm_flags |= VM_EXEC;
-        if (ph->p_flags & ELF_PF_W) vm_flags |= VM_WRITE;
-        if (ph->p_flags & ELF_PF_R) vm_flags |= VM_READ;
-        if (vm_flags & VM_WRITE) perm |= PTE_W;
-        if ((ret = mm_map(mm, ph->p_va, ph->p_memsz, vm_flags, NULL)) != 0) {
+        if (ph->p_flags & ELF_PF_X)
+            vm_flags |= VM_EXEC;
+        if (ph->p_flags & ELF_PF_W)
+            vm_flags |= VM_WRITE;
+        if (ph->p_flags & ELF_PF_R)
+            vm_flags |= VM_READ;
+        if (vm_flags & VM_WRITE)
+            perm |= PTE_W;
+        if ((ret = mm_map(mm, ph->p_va, ph->p_memsz, vm_flags, NULL)) != 0)
+        {
             goto bad_cleanup_mmap;
         }
         unsigned char *from = binary + ph->p_offset;
@@ -559,42 +686,58 @@ load_icode(unsigned char *binary, size_t size) {
 
         ret = -E_NO_MEM;
 
-     //(3.6) alloc memory, and  copy the contents of every program section (from, from+end) to process's memory (la, la+end)
+        //(3.6) alloc memory, and  copy the contents of every program section (from, from+end) to process's memory (la, la+end)
         end = ph->p_va + ph->p_filesz;
-     //(3.6.1) copy TEXT/DATA section of bianry program
-        while (start < end) {
-            if ((page = pgdir_alloc_page(mm->pgdir, la, perm)) == NULL) {
+        //(3.6.1) copy TEXT/DATA section of bianry program
+        // Map virtual address of each page to physical address.
+        while (start < end)
+        {
+            if ((page = pgdir_alloc_page(mm->pgdir, la, perm)) == NULL)
+            {
                 goto bad_cleanup_mmap;
             }
             off = start - la, size = PGSIZE - off, la += PGSIZE;
-            if (end < la) {
+            if (end < la)
+            {
                 size -= la - end;
             }
+
+            // 根据elf中程序头的设置，将binary中的对应数据复制到新分配的物理页中
             memcpy(page2kva(page) + off, from, size);
             start += size, from += size;
         }
 
-      //(3.6.2) build BSS section of binary program
+        //(3.6.2) build BSS section of binary program
+        // BSS stores uninitialized data.
         end = ph->p_va + ph->p_memsz;
-        if (start < la) {
+
+        // @see https://en.wikipedia.org/wiki/File:Program_memory_layout.pdf
+        if (start < la)
+        {
             /* ph->p_memsz == ph->p_filesz */
-            if (start == end) {
-                continue ;
+            if (start == end) // No space available.
+            {
+                continue;
             }
             off = start + PGSIZE - la, size = PGSIZE - off;
-            if (end < la) {
+            if (end < la)
+            {
                 size -= la - end;
             }
             memset(page2kva(page) + off, 0, size);
             start += size;
             assert((end < la && start == end) || (end >= la && start == la));
         }
-        while (start < end) {
-            if ((page = pgdir_alloc_page(mm->pgdir, la, perm)) == NULL) {
+        // One page for the BSS section is not enough.
+        while (start < end)
+        {
+            if ((page = pgdir_alloc_page(mm->pgdir, la, perm)) == NULL)
+            {
                 goto bad_cleanup_mmap;
             }
             off = start - la, size = PGSIZE - off, la += PGSIZE;
-            if (end < la) {
+            if (end < la)
+            {
                 size -= la - end;
             }
             memset(page2kva(page) + off, 0, size);
@@ -603,14 +746,15 @@ load_icode(unsigned char *binary, size_t size) {
     }
     //(4) build user stack memory
     vm_flags = VM_READ | VM_WRITE | VM_STACK;
-    if ((ret = mm_map(mm, USTACKTOP - USTACKSIZE, USTACKSIZE, vm_flags, NULL)) != 0) {
+    if ((ret = mm_map(mm, USTACKTOP - USTACKSIZE, USTACKSIZE, vm_flags, NULL)) != 0)
+    {
         goto bad_cleanup_mmap;
     }
-    assert(pgdir_alloc_page(mm->pgdir, USTACKTOP-PGSIZE , PTE_USER) != NULL);
-    assert(pgdir_alloc_page(mm->pgdir, USTACKTOP-2*PGSIZE , PTE_USER) != NULL);
-    assert(pgdir_alloc_page(mm->pgdir, USTACKTOP-3*PGSIZE , PTE_USER) != NULL);
-    assert(pgdir_alloc_page(mm->pgdir, USTACKTOP-4*PGSIZE , PTE_USER) != NULL);
-    
+    assert(pgdir_alloc_page(mm->pgdir, USTACKTOP - PGSIZE, PTE_USER) != NULL);
+    assert(pgdir_alloc_page(mm->pgdir, USTACKTOP - 2 * PGSIZE, PTE_USER) != NULL);
+    assert(pgdir_alloc_page(mm->pgdir, USTACKTOP - 3 * PGSIZE, PTE_USER) != NULL);
+    assert(pgdir_alloc_page(mm->pgdir, USTACKTOP - 4 * PGSIZE, PTE_USER) != NULL);
+
     //(5) set current process's mm, sr3, and set CR3 reg = physical addr of Page Directory
     mm_count_inc(mm);
     current->mm = mm;
@@ -634,6 +778,7 @@ load_icode(unsigned char *binary, size_t size) {
     tf->tf_esp = USTACKTOP;
     tf->tf_eip = elf->e_entry;
     tf->tf_eflags = FL_IF;
+
     ret = 0;
 out:
     return ret;
@@ -649,13 +794,15 @@ bad_mm:
 
 // do_execve - call exit_mmap(mm)&put_pgdir(mm) to reclaim memory space of current process
 //           - call load_icode to setup new memory space accroding binary prog.
-int
-do_execve(const char *name, size_t len, unsigned char *binary, size_t size) {
+int do_execve(const char *name, size_t len, unsigned char *binary, size_t size)
+{
     struct mm_struct *mm = current->mm;
-    if (!user_mem_check(mm, (uintptr_t)name, len, 0)) {
+    if (!user_mem_check(mm, (uintptr_t)name, len, 0))
+    {
         return -E_INVAL;
     }
-    if (len > PROC_NAME_LEN) {
+    if (len > PROC_NAME_LEN)
+    {
         len = PROC_NAME_LEN;
     }
 
@@ -663,9 +810,14 @@ do_execve(const char *name, size_t len, unsigned char *binary, size_t size) {
     memset(local_name, 0, sizeof(local_name));
     memcpy(local_name, name, len);
 
-    if (mm != NULL) {
+    if (mm != NULL)
+    {
+        // Free the memory manager (if no more referenced) of the current process because we need an empty process to contain the user program.
         lcr3(boot_cr3);
-        if (mm_count_dec(mm) == 0) {
+
+        // If the current memory manager is no longer referenced, just destroy it.
+        if (mm_count_dec(mm) == 0)
+        {
             exit_mmap(mm);
             put_pgdir(mm);
             mm_destroy(mm);
@@ -673,7 +825,9 @@ do_execve(const char *name, size_t len, unsigned char *binary, size_t size) {
         current->mm = NULL;
     }
     int ret;
-    if ((ret = load_icode(binary, size)) != 0) {
+    // By load_icode the current process if filled with the code of user program.
+    if ((ret = load_icode(binary, size)) != 0)
+    {
         goto execve_exit;
     }
     set_proc_name(current, local_name);
@@ -685,8 +839,8 @@ execve_exit:
 }
 
 // do_yield - ask the scheduler to reschedule
-int
-do_yield(void) {
+int do_yield(void)
+{
     current->need_resched = 1;
     return 0;
 }
@@ -694,11 +848,13 @@ do_yield(void) {
 // do_wait - wait one OR any children with PROC_ZOMBIE state, and free memory space of kernel stack
 //         - proc struct of this child.
 // NOTE: only after do_wait function, all resources of the child proces are free.
-int
-do_wait(int pid, int *code_store) {
+int do_wait(int pid, int *code_store)
+{
     struct mm_struct *mm = current->mm;
-    if (code_store != NULL) {
-        if (!user_mem_check(mm, (uintptr_t)code_store, sizeof(int), 1)) {
+    if (code_store != NULL)
+    {
+        if (!user_mem_check(mm, (uintptr_t)code_store, sizeof(int), 1))
+        {
             return -E_INVAL;
         }
     }
@@ -707,29 +863,37 @@ do_wait(int pid, int *code_store) {
     bool intr_flag, haskid;
 repeat:
     haskid = 0;
-    if (pid != 0) {
+    if (pid != 0)
+    {
         proc = find_proc(pid);
-        if (proc != NULL && proc->parent == current) {
+        if (proc != NULL && proc->parent == current)
+        {
             haskid = 1;
-            if (proc->state == PROC_ZOMBIE) {
+            if (proc->state == PROC_ZOMBIE)
+            {
                 goto found;
             }
         }
     }
-    else {
+    else
+    {
         proc = current->cptr;
-        for (; proc != NULL; proc = proc->optr) {
+        for (; proc != NULL; proc = proc->optr)
+        {
             haskid = 1;
-            if (proc->state == PROC_ZOMBIE) {
+            if (proc->state == PROC_ZOMBIE)
+            {
                 goto found;
             }
         }
     }
-    if (haskid) {
+    if (haskid)
+    {
         current->state = PROC_SLEEPING;
         current->wait_state = WT_CHILD;
         schedule();
-        if (current->flags & PF_EXITING) {
+        if (current->flags & PF_EXITING)
+        {
             do_exit(-E_KILLED);
         }
         goto repeat;
@@ -737,10 +901,12 @@ repeat:
     return -E_BAD_PROC;
 
 found:
-    if (proc == idleproc || proc == initproc) {
+    if (proc == idleproc || proc == initproc)
+    {
         panic("wait idleproc or initproc.\n");
     }
-    if (code_store != NULL) {
+    if (code_store != NULL)
+    {
         *code_store = proc->exit_code;
     }
     local_intr_save(intr_flag);
@@ -755,13 +921,16 @@ found:
 }
 
 // do_kill - kill process with pid by set this process's flags with PF_EXITING
-int
-do_kill(int pid) {
+int do_kill(int pid)
+{
     struct proc_struct *proc;
-    if ((proc = find_proc(pid)) != NULL) {
-        if (!(proc->flags & PF_EXITING)) {
+    if ((proc = find_proc(pid)) != NULL)
+    {
+        if (!(proc->flags & PF_EXITING))
+        {
             proc->flags |= PF_EXITING;
-            if (proc->wait_state & WT_INTERRUPTED) {
+            if (proc->wait_state & WT_INTERRUPTED)
+            {
                 wakeup_proc(proc);
             }
             return 0;
@@ -773,39 +942,44 @@ do_kill(int pid) {
 
 // kernel_execve - do SYS_exec syscall to exec a user program called by user_main kernel_thread
 static int
-kernel_execve(const char *name, unsigned char *binary, size_t size) {
+kernel_execve(const char *name, unsigned char *binary, size_t size)
+{
     int ret, len = strlen(name);
-    asm volatile (
+    asm volatile(
         "int %1;"
-        : "=a" (ret)
-        : "i" (T_SYSCALL), "0" (SYS_exec), "d" (name), "c" (len), "b" (binary), "D" (size)
+        : "=a"(ret)
+        : "i"(T_SYSCALL), "0"(SYS_exec), "d"(name), "c"(len), "b"(binary), "D"(size)
         : "memory");
     return ret;
 }
 
-#define __KERNEL_EXECVE(name, binary, size) ({                          \
-            cprintf("kernel_execve: pid = %d, name = \"%s\".\n",        \
-                    current->pid, name);                                \
-            kernel_execve(name, binary, (size_t)(size));                \
-        })
+#define __KERNEL_EXECVE(name, binary, size) (                \
+    {                                                        \
+        cprintf("kernel_execve: pid = %d, name = \"%s\".\n", \
+                current->pid, name);                         \
+        kernel_execve(name, binary, (size_t)(size));         \
+    })
 
-#define KERNEL_EXECVE(x) ({                                             \
-            extern unsigned char _binary_obj___user_##x##_out_start[],  \
-                _binary_obj___user_##x##_out_size[];                    \
-            __KERNEL_EXECVE(#x, _binary_obj___user_##x##_out_start,     \
-                            _binary_obj___user_##x##_out_size);         \
-        })
+#define KERNEL_EXECVE(x) (                                         \
+    {                                                              \
+        extern unsigned char _binary_obj___user_##x##_out_start[], \
+            _binary_obj___user_##x##_out_size[];                   \
+        __KERNEL_EXECVE(#x, _binary_obj___user_##x##_out_start,    \
+                        _binary_obj___user_##x##_out_size);        \
+    })
 
-#define __KERNEL_EXECVE2(x, xstart, xsize) ({                           \
-            extern unsigned char xstart[], xsize[];                     \
-            __KERNEL_EXECVE(#x, xstart, (size_t)xsize);                 \
-        })
+#define __KERNEL_EXECVE2(x, xstart, xsize) (        \
+    {                                               \
+        extern unsigned char xstart[], xsize[];     \
+        __KERNEL_EXECVE(#x, xstart, (size_t)xsize); \
+    })
 
-#define KERNEL_EXECVE2(x, xstart, xsize)        __KERNEL_EXECVE2(x, xstart, xsize)
+#define KERNEL_EXECVE2(x, xstart, xsize) __KERNEL_EXECVE2(x, xstart, xsize)
 
 // user_main - kernel thread used to exec a user program
 static int
-user_main(void *arg) {
+user_main(void *arg)
+{
 #ifdef TEST
     KERNEL_EXECVE2(TEST, TESTSTART, TESTSIZE);
 #else
@@ -816,16 +990,22 @@ user_main(void *arg) {
 
 // init_main - the second kernel thread used to create user_main kernel threads
 static int
-init_main(void *arg) {
+init_main(void *arg)
+{
     size_t nr_free_pages_store = nr_free_pages();
     size_t kernel_allocated_store = kallocated();
 
     int pid = kernel_thread(user_main, NULL, 0);
-    if (pid <= 0) {
+    if (pid <= 0)
+    {
         panic("create user_main failed.\n");
     }
 
-    while (do_wait(0, NULL) == 0) {
+    // do_wait - wait one OR any children with PROC_ZOMBIE state, and free memory space of kernel stack
+    //         - proc struct of this child.
+    // NOTE: only after do_wait function, all resources of the child proces are free.
+    while (do_wait(0, NULL) == 0)
+    {
         schedule();
     }
 
@@ -834,24 +1014,25 @@ init_main(void *arg) {
     assert(nr_process == 2);
     assert(list_next(&proc_list) == &(initproc->list_link));
     assert(list_prev(&proc_list) == &(initproc->list_link));
-    assert(nr_free_pages_store == nr_free_pages());
-    assert(kernel_allocated_store == kallocated());
+
     cprintf("init check memory pass.\n");
     return 0;
 }
 
-// proc_init - set up the first kernel thread idleproc "idle" by itself and 
+// proc_init - set up the first kernel thread idleproc "idle" by itself and
 //           - create the second kernel thread init_main
-void
-proc_init(void) {
+void proc_init(void)
+{
     int i;
 
     list_init(&proc_list);
-    for (i = 0; i < HASH_LIST_SIZE; i ++) {
+    for (i = 0; i < HASH_LIST_SIZE; i++)
+    {
         list_init(hash_list + i);
     }
 
-    if ((idleproc = alloc_proc()) == NULL) {
+    if ((idleproc = alloc_proc()) == NULL)
+    {
         panic("cannot alloc idleproc.\n");
     }
 
@@ -860,12 +1041,13 @@ proc_init(void) {
     idleproc->kstack = (uintptr_t)bootstack;
     idleproc->need_resched = 1;
     set_proc_name(idleproc, "idle");
-    nr_process ++;
+    nr_process++;
 
     current = idleproc;
 
     int pid = kernel_thread(init_main, NULL, 0);
-    if (pid <= 0) {
+    if (pid <= 0)
+    {
         panic("create init_main failed.\n");
     }
 
@@ -877,10 +1059,12 @@ proc_init(void) {
 }
 
 // cpu_idle - at the end of kern_init, the first kernel thread idleproc will do below works
-void
-cpu_idle(void) {
-    while (1) {
-        if (current->need_resched) {
+void cpu_idle(void)
+{
+    while (1)
+    {
+        if (current->need_resched)
+        {
             schedule();
         }
     }
