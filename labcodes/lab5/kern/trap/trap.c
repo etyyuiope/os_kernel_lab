@@ -13,6 +13,8 @@
 
 #define TICK_NUM 100
 
+#define T_SYSCALL 0x80
+
 static void print_ticks() {
     cprintf("%d ticks\n",TICK_NUM);
 #ifdef DEBUG_GRADE
