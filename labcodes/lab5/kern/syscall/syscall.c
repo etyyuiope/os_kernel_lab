@@ -28,10 +28,12 @@ sys_wait(uint32_t arg[]) {
 
 static int
 sys_exec(uint32_t arg[]) {
-    const char *name = (const char *)arg[0];
-    size_t len = (size_t)arg[1];
-    unsigned char *binary = (unsigned char *)arg[2];
-    size_t size = (size_t)arg[3];
+    const char *name = (const char *)arg[0]; // The name of the process;
+    size_t len = (size_t)arg[1];             // The length of the name;
+    unsigned char *binary = (unsigned char *)arg[2];  
+    // The address of the file in memory.
+    // [why it is memory? Because OS does not have a file system...]
+    size_t size = (size_t)arg[3];            // The size of the file.
     return do_execve(name, len, binary, size);
 }
 

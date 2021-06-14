@@ -634,7 +634,7 @@ load_icode(unsigned char *binary, size_t size)
     //(3) copy TEXT/DATA section, build BSS parts in binary to memory space of process
     struct Page *page;
     //(3.1) get the file header of the bianry program (ELF format)
-    struct elfhdr *elf = (struct elfhdr *)binary;
+    struct elfhdr *elf = (struct elfhdr *)binary; // <- the header is at position 0.
     //(3.2) get the entry of the program section headers of the bianry program (ELF format)
     struct proghdr *ph = (struct proghdr *)(binary + elf->e_phoff);
     //(3.3) This program is valid?
@@ -648,11 +648,12 @@ load_icode(unsigned char *binary, size_t size)
     struct proghdr *ph_end = ph + elf->e_phnum;
     for (; ph < ph_end; ph++)
     {
-        //(3.4) find every program section headers
+        //(3.4) find the header of each program section; it not loadable, just skip this section,
         if (ph->p_type != ELF_PT_LOAD)
         {
             continue;
         }
+        // This shall not happen: the size of the file is even bigger than the memory size it could occupy?
         if (ph->p_filesz > ph->p_memsz)
         {
             ret = -E_INVAL_ELF;
@@ -685,6 +686,7 @@ load_icode(unsigned char *binary, size_t size)
         //(3.6) alloc memory, and  copy the contents of every program section (from, from+end) to process's memory (la, la+end)
         end = ph->p_va + ph->p_filesz;
         //(3.6.1) copy TEXT/DATA section of bianry program
+        // Map virtual address of each page to physical address.
         while (start < end)
         {
             if ((page = pgdir_alloc_page(mm->pgdir, la, perm)) == NULL)
@@ -696,16 +698,21 @@ load_icode(unsigned char *binary, size_t size)
             {
                 size -= la - end;
             }
+
+            // 根据elf中程序头的设置，将binary中的对应数据复制到新分配的物理页中
             memcpy(page2kva(page) + off, from, size);
             start += size, from += size;
         }
 
         //(3.6.2) build BSS section of binary program
+        // BSS stores uninitialized data.
         end = ph->p_va + ph->p_memsz;
+
+        // @see https://en.wikipedia.org/wiki/File:Program_memory_layout.pdf
         if (start < la)
         {
             /* ph->p_memsz == ph->p_filesz */
-            if (start == end)
+            if (start == end) // No space available.
             {
                 continue;
             }
@@ -718,6 +725,7 @@ load_icode(unsigned char *binary, size_t size)
             start += size;
             assert((end < la && start == end) || (end >= la && start == la));
         }
+        // One page for the BSS section is not enough.
         while (start < end)
         {
             if ((page = pgdir_alloc_page(mm->pgdir, la, perm)) == NULL)
@@ -762,6 +770,12 @@ load_icode(unsigned char *binary, size_t size)
      *          tf_eip should be the entry point of this binary program (elf->e_entry)
      *          tf_eflags should be set to enable computer to produce Interrupt
      */
+    tf->tf_cs = USER_CS;
+    tf->tf_ds = tf->tf_es = tf->ss = USER_DS;
+    tf->tf_esp = USTACKTOP;
+    tf->tf_eip = elf->e_entry;
+    tf->tf_eflags = FL_IF;
+    
     ret = 0;
 out:
     return ret;
@@ -795,7 +809,10 @@ int do_execve(const char *name, size_t len, unsigned char *binary, size_t size)
 
     if (mm != NULL)
     {
+        // Free the memory manager (if no more referenced) of the current process because we need an empty process to contain the user program.
         lcr3(boot_cr3);
+
+        // If the current memory manager is no longer referenced, just destroy it.
         if (mm_count_dec(mm) == 0)
         {
             exit_mmap(mm);
@@ -805,6 +822,7 @@ int do_execve(const char *name, size_t len, unsigned char *binary, size_t size)
         current->mm = NULL;
     }
     int ret;
+    // By load_icode the current process if filled with the code of user program.
     if ((ret = load_icode(binary, size)) != 0)
     {
         goto execve_exit;
@@ -980,6 +998,9 @@ init_main(void *arg)
         panic("create user_main failed.\n");
     }
 
+    // do_wait - wait one OR any children with PROC_ZOMBIE state, and free memory space of kernel stack
+    //         - proc struct of this child.
+    // NOTE: only after do_wait function, all resources of the child proces are free.
     while (do_wait(0, NULL) == 0)
     {
         schedule();
