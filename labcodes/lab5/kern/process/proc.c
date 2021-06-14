@@ -491,10 +491,6 @@ int do_fork(uint32_t clone_flags, uintptr_t stack, struct trapframe *tf)
 
     proc->parent = current; // because the current process calls do_fork
     
-    if (current->wait_state != 0) {
-        panic("The current process is also waiting!\n");
-    }
-
     assert(current->wait_state == 0);
 
     // Step 2: setup_kstack to allocate a kernal stack for child process;
